@@ -77,7 +77,7 @@ from .types import (
 DEFAULT_TEMPERATURE = 0.0
 
 APPLY_PATCH_GRAMMAR = r'''
-root ::= "{" ws "\"aaa\"" ws ":" ws "\"" patch "\"" ws "}"
+root ::= "{" ws "\"input\"" ws ":" ws "\"" patch "\"" ws "}"
 
 patch ::= begin-patch hunk+ end-patch
 
