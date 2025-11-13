@@ -93,7 +93,7 @@ update-hunk ::= "*** Update File: " filename lf move-line? change-block?
 move-line ::= "*** Move to: " filename lf
 
 change-block ::= (change-context | change-line)+ eof-line?
-change-context ::= "@@ " context-rest lf
+change-context ::= "@@ " context-rest? lf
 
 change-line ::= (" " | "+" | "-") line-rest lf
 add-line ::= "+" line-rest lf
@@ -662,10 +662,14 @@ class StreamResponsesEvents:
         # we use this to track the current output text content for things like providing the right indices in citations
         current_output_text_content = ""
         current_annotations = []
-        constrain_json_sequence = "<|constrain|>json<|message|>"
-        constrain_json_tokens = tuple(encoding.encode(constrain_json_sequence, allowed_special="all"))
+        # constrain_json_sequence = "<|constrain|>json<|message|>"
+        constrain_json_sequence = "<|message|>"
+        # constrain_json_tokens = encoding.encode(constrain_json_sequence, allowed_special="all")
         stop_words = ["<|call|>", constrain_json_sequence, "<|return|>"]
-        stop_tokens = list(encoding.stop_tokens_for_assistant_actions())
+        message_tok = encoding.encode(constrain_json_sequence, allowed_special="all")[0]
+        # stop_words = constrain_json_sequence
+        # stop_tokens = encoding.encode("".join(stop_words), allowed_special="all")
+        stop_tokens = encoding.stop_tokens_for_assistant_actions()
         inference_queue: Optional[asyncio.Queue[Optional[int]]] = None
         inference_task: Optional[asyncio.Task] = None
         inference_json_schema: dict | None = None
@@ -733,22 +737,21 @@ class StreamResponsesEvents:
             except Exception:
                 pass
 
-            if encoding.decode_utf8([next_tok]) == "<|message|>":
-                pass
-
-            self.parser.current_content_type
-            if self.parser.state == StreamState.CONTENT:
-                content_type = self.parser.current_content_type # Will be "<|constrain|>json" for structured output
-                recipient = self.parser.current_recipient # function
-
-                channel = self.parser.current_channel
-                if recipient == "functions.apply_patch":
+            if (next_tok == message_tok and
+                self.parser.state == StreamState.CONTENT and
+                self.parser.current_recipient and
+                self.parser.current_recipient.startswith("functions.") and
+                self.request_body.tools):
+                tools = self.request_body.tools
+                name = self.parser.current_recipient[len("functions."):]
+                if name == "apply_patch":
                     # # special handling for this, should use grammar
                     inference_grammar = APPLY_PATCH_GRAMMAR
-                elif self.request_body.tools and recipient and recipient.startswith("functions.") and channel == "commentary":
-                    name = recipient[len("functions."):]
-                    tool = [t for t in self.request_body.tools if isinstance(t, FunctionToolDefinition) and t.name == name][0]
+                    breakpoint()
+                else:
+                    tool = [t for t in tools if isinstance(t, FunctionToolDefinition) and t.name == name][0]
                     inference_json_schema = tool.parameters
+                    breakpoint()
             elif self.parser.state == StreamState.EXPECT_START:
                 current_output_index += 1
                 sent_output_item_added = False
