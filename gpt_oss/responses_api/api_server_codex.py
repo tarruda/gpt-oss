@@ -118,6 +118,159 @@ hex ::= [0-9a-fA-F]
 ws ::= [ \t\r\n]*
 '''
 
+# override doc for apply_patch tool
+APPLY_PATCH_DOC = '''
+Use the `apply_patch` tool to edit files.
+Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
+
+*** Begin Patch
+[ one or more file operations ]
+*** End Patch
+
+Within that envelope, you get a sequence of file operations.
+You MUST include a header to specify the action you are taking.
+Each operation starts with one of three headers:
+
+*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
+*** Delete File: <path> - remove an existing file. Nothing follows.
+*** Update File: <path> - patch an existing file in place (optionally with a rename).
+
+"Update File" May be immediately followed by *** Move to: <new path> if you want to rename the file.
+Then one or more “hunks”, each introduced by @@ (optionally followed by a hunk header). This is the format
+of a hunk:
+
+```
+@@[OPTIONAL: hunk header to improve precision when 3 lines of context above/below is not enough]
+[OPTIONAL: 3 lines of context above the modified lines]
+- [Removed lines]
++ [Added lines]
+[OPTIONAL: 3 lines of context below the modified lines]
+```
+
+A full patch can combine several operations:
+
+*** Begin Patch
+*** Add File: hello.txt
++Hello world
+*** Update File: src/app.py
+*** Move to: src/main.py
+@@ def greet():
+-print("Hi")
++print("Hello, world!")
+*** Delete File: obsolete.txt
+*** End Patch
+
+For example, let's say we have the following file:
+
+`main.py`
+```
+class Greeter:
+    def greet(self):
+        # this is the target
+        print("world")
+
+def main():
+    print("hello ", end="")
+    greeter = Greeter()
+    greeter.greet()
+
+if __name__ == "__main__":
+    main()
+```
+
+and you want to change it to:
+
+`main.py`
+```
+class Greeter:
+    def greet(self):
+        # this is the target
+        print("from", end="")
+        print("python")
+
+def main():
+    print("hello ", end="")
+    greeter = Greeter()
+    greeter.greet()
+
+if __name__ == "__main__":
+    main()
+```
+
+This is what the patch would look like. Here we use 1 line of context above, 2 lines of context below and the hunk header:
+
+```patch
+*** Begin Patch
+*** Update File:
+@@    def greet(self):
+        # this is the target
+-       print("world")
++       print("from", end="")
++       print("python")
+
+ def main():
+*** End of File
+```
+
+Since the file is small and doesn't have the edited patterns in more than one location, we could also have used:
+
+```patch
+*** Begin Patch
+*** Update File:
+@@
+-       print("world")
++       print("from", end="")
++       print("python")
+*** End of File
+```
+
+For multiple files in the same patch, the "*** End of File" part is required. Optional for editing a single file in one patch.
+
+Another example, let's say you want to change it to:
+
+`main.py`
+```
+class Greeter:
+    def target(self):
+        return "from python"
+
+    def greet(self):
+        # this is the target
+        print(self.target())
+
+def main():
+    print("hello ", end="")
+    greeter = Greeter()
+    greeter.greet()
+
+if __name__ == "__main__":
+    main()
+```
+
+And also rename it to main_edited.py. You could then use the following:
+
+```patch
+*** Begin Patch
+*** Update File:
+*** Move to: main_edited.py
+@@
+ class Greeter:
++    def target(self):
++        return "from python"
++
+@@
+        # this is the target
+-       print("world")
++       print(self.target())
+```
+
+It is important to remember:
+
+- You must include a header with your intended action (Add/Delete/Update)
+- You must prefix new lines with `+` even when creating a new file
+- File references can only be relative, NEVER ABSOLUTE.
+'''
+
 def get_reasoning_effort(
     effort: Union[Literal["low", "medium", "high"], ReasoningEffort]
 ) -> ReasoningEffort:
@@ -752,8 +905,9 @@ class StreamResponsesEvents:
                     # # special handling for this, should use grammar
                     inference_grammar = APPLY_PATCH_GRAMMAR
                 else:
-                    tool = [t for t in tools if isinstance(t, FunctionToolDefinition) and t.name == name][0]
-                    inference_json_schema = tool.parameters
+                    matching_tools = [t for t in tools if isinstance(t, FunctionToolDefinition) and t.name == name]
+                    if matching_tools:
+                        inference_json_schema = matching_tools[0].parameters
             elif self.parser.state == StreamState.EXPECT_START:
                 current_output_index += 1
                 sent_output_item_added = False
@@ -1447,13 +1601,22 @@ async def generate(body: ResponsesRequest, request: Request):
         tools = []
         for tool in body.tools:
             if tool.type == "function":
-                tools.append(
-                    ToolDescription.new(
-                        tool.name,
-                        tool.description,
-                        tool.parameters,
+                if tool.name == "apply_patch":
+                    tools.append(
+                        ToolDescription.new(
+                            tool.name,
+                            APPLY_PATCH_DOC,
+                            tool.parameters,
+                        )
                     )
-                )
+                else:
+                    tools.append(
+                        ToolDescription.new(
+                            tool.name,
+                            tool.description,
+                            tool.parameters,
+                        )
+                    )
 
         if tools:
             developer_message_content = (
