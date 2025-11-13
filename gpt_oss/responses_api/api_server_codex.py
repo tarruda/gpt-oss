@@ -76,33 +76,39 @@ from .types import (
 )
 DEFAULT_TEMPERATURE = 0.0
 
+# original grammar in codex's apply_patch function doc
+# Patch := Begin { FileOp } End
+# Begin := "*** Begin Patch" NEWLINE
+# End := "*** End Patch" NEWLINE
+# FileOp := AddFile | DeleteFile | UpdateFile
+# AddFile := "*** Add File: " path NEWLINE { "+" line NEWLINE }
+# DeleteFile := "*** Delete File: " path NEWLINE
+# UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] { Hunk }
+# MoveTo := "*** Move to: " newPath NEWLINE
+# Hunk := "@@" [ header ] NEWLINE { HunkLine } [ "*** End of File" NEWLINE ]
+# HunkLine := (" " | "-" | "+") text NEWLINE
+# Adapted grammar to produce the patch language inside a json string
 APPLY_PATCH_GRAMMAR = r'''
 root ::= "{" ws "\"input\"" ws ":" ws "\"" patch "\"" ws "}"
 
-patch ::= begin-patch hunk+ end-patch
+patch ::= begin file-op+ end
+begin ::= "*** Begin Patch" lf
+end ::= "*** End Patch" lf
 
-begin-patch ::= "*** Begin Patch" lf
-end-patch ::= "*** End Patch" lf
+file-op ::= add-file | delete-file | update-file
 
-hunk ::= add-hunk | delete-hunk | update-hunk
+add-file ::= "*** Add File: " filename lf ("+" line )+
+delete-file ::= "*** Delete File: " filename lf
+update-file ::= "*** Update File: " filename lf move-to? hunk+
+move-to ::= "*** Move to: " filename lf
 
-add-hunk ::= "*** Add File: " filename lf add-line+
-delete-hunk ::= "*** Delete File: " filename lf
-update-hunk ::= "*** Update File: " filename lf move-line? change-block?
-
-move-line ::= "*** Move to: " filename lf
-
-change-block ::= (change-context | change-line)+ eof-line?
-change-context ::= "@@ " context-rest? lf
-
-change-line ::= (" " | "+" | "-") line-rest lf
-add-line ::= "+" line-rest lf
+hunk ::= "@@" line lf context-line{0,3} hunk-like+ context-line{0,3} ("*** End of File" lf)?
+context-line ::= " " line lf
+hunk-like ::= ("-" | "+") line lf
 
 filename ::= json-char+
-context-rest ::= json-char+
-line-rest ::= json-char*
-eof-line ::= "*** End of File" lf
 lf ::= "\\n"
+line ::= json-char*
 
 json-char ::= json-safe | json-escape | unicode-escape
 json-safe ::= [^\n\r\t"\\]
@@ -662,13 +668,11 @@ class StreamResponsesEvents:
         # we use this to track the current output text content for things like providing the right indices in citations
         current_output_text_content = ""
         current_annotations = []
-        # constrain_json_sequence = "<|constrain|>json<|message|>"
-        constrain_json_sequence = "<|message|>"
-        # constrain_json_tokens = encoding.encode(constrain_json_sequence, allowed_special="all")
-        stop_words = ["<|call|>", constrain_json_sequence, "<|return|>"]
-        message_tok = encoding.encode(constrain_json_sequence, allowed_special="all")[0]
-        # stop_words = constrain_json_sequence
-        # stop_tokens = encoding.encode("".join(stop_words), allowed_special="all")
+        possible_constrain_json_token = "<|message|>"
+        stop_tokens = encoding.stop_tokens_for_assistant_actions()
+        stop_words = [encoding.decode([t]) for t in stop_tokens]
+        stop_words.append(possible_constrain_json_token)
+        message_tok = encoding.encode(possible_constrain_json_token, allowed_special="all")[0]
         stop_tokens = encoding.stop_tokens_for_assistant_actions()
         inference_queue: Optional[asyncio.Queue[Optional[int]]] = None
         inference_task: Optional[asyncio.Task] = None
@@ -747,11 +751,9 @@ class StreamResponsesEvents:
                 if name == "apply_patch":
                     # # special handling for this, should use grammar
                     inference_grammar = APPLY_PATCH_GRAMMAR
-                    breakpoint()
                 else:
                     tool = [t for t in tools if isinstance(t, FunctionToolDefinition) and t.name == name][0]
                     inference_json_schema = tool.parameters
-                    breakpoint()
             elif self.parser.state == StreamState.EXPECT_START:
                 current_output_index += 1
                 sent_output_item_added = False
