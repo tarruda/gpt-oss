@@ -97,7 +97,7 @@ end ::= "*** End Patch" lf
 
 file-op ::= add-file | delete-file | update-file
 
-add-file ::= "*** Add File: " filename lf ("+" line )+
+add-file ::= "*** Add File: " filename lf ("+" line lf)+
 delete-file ::= "*** Delete File: " filename lf
 update-file ::= "*** Update File: " filename lf move-to? hunk+
 move-to ::= "*** Move to: " filename lf
