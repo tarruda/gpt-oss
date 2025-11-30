@@ -149,6 +149,14 @@ SHELL_GUIDELINES = r'''
 - If a shell command fails with "Permission denied", IMMEDIATELY RE-RUN THE EXACT SAME COMMAND passing both "with_escalated_permissions" and "justification"!
 '''
 
+UPDATE_PLAN_GUIDELINES = r'''
+- A tool named `update_plan` is available to you. You can use it to keep an up‑to‑date, step‑by‑step plan for the task.
+- To create a new plan, call `update_plan` with a short list of 1‑sentence steps (no more than 5-7 words each) with a `status` for each step (`pending`, `in_progress`, or `completed`).
+- When steps have been completed, use `update_plan` to mark each finished step as `completed` and the next step you are working on as `in_progress`.
+- There should always be exactly one `in_progress` step until everything is done. You can mark multiple items as complete in a single `update_plan` call.
+- If all steps are complete, ensure you call `update_plan` to mark all steps as `completed`.
+'''
+
 SYSTEM_INSTRUCTIONS_OVERRIDE = f'''
 You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. You are expected to be precise, safe, and helpful.
 
@@ -342,9 +350,12 @@ When using the apply_patch tool, you must adhere to the following guidelines:
 {APPLY_PATCH_GUIDELINES}
 '''
 
+
+
 TOOL_GUIDELINES = {
     'shell': SHELL_GUIDELINES,
     'apply_patch': APPLY_PATCH_GUIDELINES,
+    'update_plan': UPDATE_PLAN_GUIDELINES,
 }
 
 
@@ -989,6 +1000,7 @@ class StreamResponsesEvents:
                 self.request_body.tools):
                 tools = self.request_body.tools
                 name = self.parser.current_recipient[len("functions."):]
+                guidelines = TOOL_GUIDELINES.get(name)
                 if name == "apply_patch":
                     # # special handling for this, should use grammar
                     inference_grammar = APPLY_PATCH_GRAMMAR
@@ -996,8 +1008,8 @@ class StreamResponsesEvents:
                     matching_tools = [t for t in tools if isinstance(t, FunctionToolDefinition) and t.name == name]
                     if matching_tools:
                         inference_json_schema = matching_tools[0].parameters
-                append_thinking(f' Before invoking the function, must recall its guidelines:\n{TOOL_GUIDELINES[name]}')
-                print(encoding.decode(self.tokens[-200:]))
+                if guidelines is not None:
+                    append_thinking(f' Before invoking the function, must recall its guidelines:\n{TOOL_GUIDELINES[name]}')
             elif self.parser.state == StreamState.EXPECT_START:
                 current_output_index += 1
                 sent_output_item_added = False
@@ -1684,7 +1696,7 @@ async def generate(body: ResponsesRequest, request: Request):
     assert instructions
 
     if instructions or body.tools:
-        instructions = SYSTEM_INSTRUCTIONS_OVERRIDE
+        # instructions = SYSTEM_INSTRUCTIONS_OVERRIDE
         developer_message_content = DeveloperContent.new().with_instructions(
             instructions
         )
@@ -1696,7 +1708,7 @@ async def generate(body: ResponsesRequest, request: Request):
             "list_mcp_resource_templates",
             "read_mcp_resource",
             "view_image",
-            "update_plan",
+            # "update_plan",
         ]
         for tool in body.tools:
             if tool.type == "function":
